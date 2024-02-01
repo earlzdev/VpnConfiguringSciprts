@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# setUp wireguard
+# setup wireguard
 
 sudo apt-get update
 
@@ -10,7 +10,15 @@ sudo bash wireguard.sh --auto
 
 
 
-#setup software
+# setup script
+
+wget -o wg-peer.sh https://github.com/earlzdev/VpnConfiguringSciprts.git
+
+sudo chmod +x wg-peer.sh
+
+
+
+# setup software
 
 git clone https://github.com/earlzdev/WgBackend.git
 
