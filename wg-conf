@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# setUp wireguard
+
+sudo apt-get update
+
+wget -O wireguard.sh https://get.vpnsetup.net/wg
+
+sudo bash wireguard.sh --auto
+
+
+
+#setup software
+
+git clone https://github.com/earlzdev/WgBackend.git
+
+cd WgBackend
+
+apt install uvicorn
+
+apt install python3-pip
+
+pip install "fastapi[all]"
+
+pip install -r /path/to/requirements.txt
+
+nohup uvicorn main:app --host 0.0.0.0 --port 8000 > output.log 2>&1 &

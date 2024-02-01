@@ -1,0 +1,165 @@
+#!/bin/bash
+
+readonly CFOLDER=/etc/wireguard/clients
+readonly THISFILE=$(basename $0)
+
+# =================================================
+
+main () {
+  # Check for root privileges
+  [[ $USER == root ]] || { echo "Root privileges required. Try: sudo $THISFILE"; return 1; }
+
+  # Find Wireguard interface
+  if=$(wg show interfaces)
+  [[ $if =~ $'\n' ]] && { echo "WARNING: multiple Wireguard interfaces detected"; }
+  read -r INTERFACE <<<$if; readonly INTERFACE
+  echo "Using interface $INTERFACE"
+
+  case $1 in
+    a*)
+      add_new_peer
+      ;;
+    s*)
+      show_peer_conf $2
+      ;;
+    d*)
+      delete_peer $2
+      ;;
+    l*)
+      list_peers
+      ;;
+    *)
+      usage
+      ;;
+  esac
+}
+
+# =================================================
+
+usage () {
+cat <<USAGE
+$THISFILE [add|show <peer>|del <peer>|list]
+
+a[dd]  : add a new peer
+s[how] : show peer configuration
+d[el]  : delete peer
+l[ist] : list peers
+<peer> is peer public key as shown by list command
+USAGE
+}
+
+build_peer_list () {
+  PEERLIST=':'$(wg show $INTERFACE peers | awk '{printf $1":"}')
+}
+
+check_peer_exists () {
+  local pk=$1
+  build_peer_list
+  [[ $PEERLIST =~ ":${pk}:" ]] || { echo "Cannot find peer $pk"; return 1; }
+}
+
+show_peer_conf () {
+  local pk=$1
+  check_peer_exists $pk || return 1
+  local clientfile=$CFOLDER/$(md5sum <<<${pk}); clientfile=${clientfile%% *}
+  [[ -r $clientfile ]] || { echo "Cannot read $clientfile"; return 1; }
+  qrencode -t ANSIUTF8 < $clientfile
+  cat $clientfile
+  echo -e "---------\n"
+  wg show $INTERFACE | awk '$0=="peer: '${pk}'"{f=1; print; next} /^peer:/{f=0} f'
+}
+
+delete_peer () {
+  local pk=$1
+  check_peer_exists $pk || return 1
+  wg set $INTERFACE peer $pk remove && {
+    wg-quick save ${INTERFACE}
+    clientfile=$CFOLDER/$(md5sum <<<${pk}); clientfile=${clientfile%% *}
+    rm -f $clientfile
+    echo "Removed peer $pk"
+  } || { echo "Cannot remove peer $pk"; return 1; }
+}
+
+list_peers () {
+  wg show $INTERFACE |\
+    awk '/^peer:/{
+            f=1
+            print "# '$THISFILE' show '\''"$2"'\''"
+            print "# '$THISFILE' del '\''"$2"'\''"
+            print
+            next
+            }
+          f'
+}
+
+add_new_peer () {
+  # Generate peer keys
+
+  PRIVATE_KEY=$(wg genkey)
+  PUBLIC_KEY=$(echo ${PRIVATE_KEY} | wg pubkey)
+  PRESHARED_KEY=$(wg genpsk)
+
+  # Read server key from interface
+  SERVER_PUBLIC_KEY=$(wg show ${INTERFACE} public-key)
+
+  # Get next free peer IP (This will break after x.x.x.255)
+  PEER_ADDRESS=$(wg show ${INTERFACE} allowed-ips |\
+    cut -f 2 |\
+    awk -F'[./]' '{print $1"."$2"."$3"."1+$4"/"$5}' |\
+    sort -t '.' -k 1,1 -k 2,2 -k 3,3 -k 4,4 -n | tail -n1)
+
+ # NAMESERVER=$(ip -j addr show $INTERFACE | jq -r '.[0].addr_info[0].local')
+ # nslookup google.com $NAMESERVER > /dev/null || {
+ #   NAMESERVER=$(nslookup bogusname | awk '/^Server:/{print $2}')
+ #   [[ ! $NAMESERVER =~ ^127 ]] && nslookup google.com $NAMESERVER > /dev/null || NAMESERVER="8.8.8.8, 1.1.1.1"
+ # }
+#  NAMESERVER = 1.1.1.1
+
+  LISTENPORT=$(wg show ${INTERFACE} listen-port)
+  ENDPOINT=$(curl -s ipinfo.io | jq -r '.ip')
+
+  # Add peer
+  wg set ${INTERFACE} peer ${PUBLIC_KEY} preshared-key <(echo ${PRESHARED_KEY}) allowed-ips ${PEER_ADDRESS} || {
+    echo "Cannot add peer ${PEER_ADDRESS} with public key ${PUBLIC_KEY}"
+    return 1
+  }
+  wg-quick save ${INTERFACE}
+
+  echo "saved"
+  # Generate peer config
+  read -r -d$'\x04' CONFIG << END_OF_CONFIG
+[Interface]
+Address = ${PEER_ADDRESS}
+PrivateKey = ${PRIVATE_KEY}
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = ${SERVER_PUBLIC_KEY}
+PresharedKey = ${PRESHARED_KEY}
+AllowedIPs = 0.0.0.0/1, 128.0.0.0/1
+Endpoint = ${ENDPOINT}:${LISTENPORT}
+END_OF_CONFIG
+
+  # Save added peer config
+  clientfile=$CFOLDER/$(md5sum <<<${PUBLIC_KEY}); clientfile=${clientfile%% *}
+  mkdir -p $CFOLDER
+  touch $clientfile
+  chmod go-rwx $clientfile
+  #echo "$CONFIG" >${clientfile}
+
+  #show_peer_conf ${PUBLIC_KEY}
+  # Show added peer config
+  echo "--- CONFIG: ---"
+  echo "public: ${PUBLIC_KEY}"
+  echo "preshared: ${PRESHARED_KEY}"
+  echo "endpoint: ${ENDPOINT}:${LISTENPORT}"
+  echo "allowed ips: 0.0.0.0/1, 128.0.0.0/1"
+  echo "interface address: ${PEER_ADDRESS}"
+  echo "interface privateKey: ${PRIVATE_KEY}"
+  echo "interface dns: 1.1.1.1"
+  echo "server public key: ${SERVER_PUBLIC_KEY}"
+}
+
+# =================================================
+
+main "$@"
