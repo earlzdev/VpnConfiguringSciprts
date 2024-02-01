@@ -12,7 +12,7 @@ sudo bash wireguard.sh --auto
 
 # setup script
 
-wget -o wg-peer.sh https://github.com/earlzdev/VpnConfiguringSciprts.git
+# wget -o wg-peer.sh https://github.com/earlzdev/VpnConfiguringSciprts.git
 
 sudo chmod +x wg-peer.sh
 
